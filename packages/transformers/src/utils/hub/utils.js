@@ -184,6 +184,30 @@ export async function readResponse(response, progress_callback, expectedSize) {
 }
 
 /**
+ * Wraps a buffer in a ReadableStream that yields views of it in chunks, without copying it.
+ * Unlike `new Response(buffer)`, which copies the whole buffer, a Response with this
+ * stream as its body only holds one chunk at a time while it is consumed (e.g., by `cache.put`).
+ *
+ * @param {Uint8Array} buffer The buffer to stream.
+ * @param {number} [chunkSize] The maximum size of each chunk, in bytes.
+ * @returns {ReadableStream<Uint8Array>} A stream of views of the buffer.
+ */
+export function bufferToStream(buffer, chunkSize = 16 * 1024 * 1024) {
+    let offset = 0;
+    return new ReadableStream({
+        pull(controller) {
+            if (offset >= buffer.byteLength) {
+                controller.close();
+                return;
+            }
+            const end = Math.min(offset + chunkSize, buffer.byteLength);
+            controller.enqueue(buffer.subarray(offset, end));
+            offset = end;
+        },
+    });
+}
+
+/**
  * Checks if the given URL is a blob URL (created via URL.createObjectURL).
  * Blob URLs should not be cached as they are temporary in-memory references.
  * @param {string} url - The URL to check.

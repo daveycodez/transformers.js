@@ -1,5 +1,6 @@
 import { env } from "../../src/transformers.js";
 import { getModelFile } from "../../src/utils/hub.js";
+import { bufferToStream } from "../../src/utils/hub/utils.js";
 import { init } from "../init.js";
 
 // Initialise the testing environment
@@ -20,15 +21,18 @@ class FakeBrowserCache extends Cache {
     super();
     /** @type {string[]} */
     this.puts = [];
+    /** @type {Response[]} */
+    this.responses = [];
   }
 
   async match(_request) {
     return undefined;
   }
 
-  async put(request, _response) {
+  async put(request, response) {
     const key = String(request);
     this.puts.push(key);
+    this.responses.push(response);
     let scheme = null;
     try {
       scheme = new URL(key).protocol;
@@ -141,5 +145,40 @@ describe("Browser cache", () => {
     expect(file).toBeInstanceOf(Uint8Array);
     expect(cache.puts).toHaveLength(1);
     expect(cache.puts[0]).toMatch(/^https:/);
+  });
+
+  it("should cache the full file contents with the correct content-length", async () => {
+    env.allowLocalModels = false;
+    const data = new Uint8Array(1000).map((_, i) => i % 251);
+    env.fetch = async () => new Response(data, { status: 200, headers: { "content-type": "application/octet-stream" } });
+
+    const file = await getModelFile("my-org/my-model", "onnx/model.onnx_data", true, {});
+
+    expect(file).toEqual(data);
+    expect(cache.responses).toHaveLength(1);
+    const [cached] = cache.responses;
+    expect(cached.headers.get("content-length")).toBe("1000");
+    expect(new Uint8Array(await cached.arrayBuffer())).toEqual(data);
+  });
+});
+
+describe("bufferToStream", () => {
+  it("should yield views of the buffer, without copying it", async () => {
+    const buffer = new Uint8Array(10).map((_, i) => i);
+    const reader = bufferToStream(buffer, 4).getReader();
+
+    const chunks = [];
+    for (let result = await reader.read(); !result.done; result = await reader.read()) {
+      chunks.push(result.value);
+    }
+
+    expect(chunks.map((chunk) => chunk.length)).toEqual([4, 4, 2]);
+    expect(chunks.every((chunk) => chunk.buffer === buffer.buffer)).toBe(true);
+    expect(chunks.flatMap((chunk) => Array.from(chunk))).toEqual(Array.from(buffer));
+  });
+
+  it("should close immediately for an empty buffer", async () => {
+    const { done } = await bufferToStream(new Uint8Array(0)).getReader().read();
+    expect(done).toBe(true);
   });
 });

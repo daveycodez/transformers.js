@@ -16,6 +16,7 @@ import {
     makePretrainedOptionsKey,
     ModelFileNotFoundError,
     readResponse,
+    bufferToStream,
     toAbsoluteURL,
 } from './hub/utils.js';
 import { getCache, tryCache } from './cache.js';
@@ -228,14 +229,16 @@ async function storeCachedResource(path_or_repo_id, filename, cache, cacheKey, r
             : undefined;
         await cache.put(cacheKey, /** @type {Response} */ (response), wrapped_progress);
     } else if (typeof response !== 'string') {
-        // NOTE: We use `new Response(buffer, ...)` instead of `response.clone()` to handle LFS files
+        // NOTE: We create a new Response from the buffer instead of using `response.clone()` to handle LFS files
         // Explicitly set content-length from the buffer size, since the browser Cache API may strip it.
         const headers = new Headers(response.headers);
         headers.set('content-length', result.byteLength.toString());
         await cache
             .put(
                 cacheKey,
-                new Response(/** @type {any} */ (result), {
+                // Stream the buffer instead of passing it directly, since `new Response(buffer)`
+                // copies the whole buffer, doubling peak memory for large (e.g., external data) files.
+                new Response(bufferToStream(result), {
                     headers,
                 }),
             )
